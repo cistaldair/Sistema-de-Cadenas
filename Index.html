@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activación de los Globos - Paralelo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            touch-action: manipulation;
+            background-color: #030712;
+        }
+        #game-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            padding: 2rem;
+            width: 100%;
+            transition: filter 0.5s ease;
+        }
+        .game-instance {
+            border: 1px solid #374151;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            background-color: #111827;
+            transition: transform 0.5s ease, z-index 0.5s, box-shadow 0.5s ease, filter 0.5s ease;
+            cursor: pointer;
+        }
+        .game-instance.locked {
+            filter: grayscale(1);
+            opacity: 0.6;
+        }
+        .game-instance.zoomed {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 95vw;
+            max-width: 800px;
+            height: auto;
+            transform: translate(-50%, -50%) scale(1);
+            z-index: 100;
+            cursor: default;
+            box-shadow: 0 0 40px rgba(0,0,0,0.7);
+        }
+        #zoom-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+            z-index: 50;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+        }
+        #zoom-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .animation-container {
+            position: relative;
+            width: 100%;
+            padding-bottom: 100%; /* Aspect ratio 1:1 */
+            height: 0;
+        }
+        .animation-content {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .schematic-circle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .element-label {
+            position: absolute;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        .globe {
+            position: absolute;
+            width: 10%; /* Responsive size */
+            height: 10%;
+            background-color: rgba(29, 78, 216, 0.8);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            font-size: 1.25rem;
+            border: 2px solid white;
+            z-index: 3;
+        }
+        .zoomed .globe { cursor: grab; }
+        .globe.dragging { cursor: grabbing; z-index: 10; transition: none; }
+        .globe.active { background-color: rgba(252, 211, 77, 0.9); color: #1e3a8a; }
+        .close-zoom-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            width: 2.5rem;
+            height: 2.5rem;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border-radius: 50%;
+            border: none;
+            font-size: 1.5rem;
+            line-height: 2.5rem;
+            text-align: center;
+            cursor: pointer;
+            display: none;
+            z-index: 110;
+        }
+        .zoomed .close-zoom-btn { display: block; }
+        #celebration-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; z-index: 9999; }
+        .confetti { position: absolute; width: 10px; height: 10px; opacity: 0.7; animation: fall 5s linear forwards; }
+        @keyframes fall { to { transform: translateY(100vh) rotate(720deg); opacity: 0; } }
+    </style>
+</head>
+<body class="text-white">
+
+    <div id="zoom-overlay"></div>
+    <div id="celebration-container"></div>
+    <h1 class="text-3xl md:text-4xl font-bold text-amber-300 text-center mt-8">Activación de los Globos</h1>
+
+    <div id="game-grid">
+        <!-- Las 7 instancias del juego se generarán aquí -->
+    </div>
+
+    <script>
+        class Game {
+            constructor(container, config) {
+                this.container = container;
+                this.config = config;
+                this.isZoomed = false;
+                this.globesData = JSON.parse(JSON.stringify([
+                    { id: 'A', angle: -115, radius: 0.45 }, { id: 'B', angle: -145, radius: 0.35 },
+                    { id: 'C', angle: -170, radius: 0.25 }, { id: 'D', angle: 180, radius: 0.15 },
+                    { id: 'E', angle: 10, radius: 0.25 },  { id: 'F', angle: 35, radius: 0.35 },
+                    { id: 'G', angle: 65, radius: 0.45 }
+                ]));
+                this.trailColors = ['#fca5a5', '#fdba74', '#fde047', '#bef264', '#86efac', '#67e8f9', '#a5b4fc'];
+                this.initUI();
+            }
+
+            initUI() {
+                // Generar las etiquetas de elementos solo para la Cadena IV
+                const elementLabelsHTML = this.config.roman === 'IV' ? `
+                    <div class="element-label" style="top: 7%; left: 50%; transform: translateX(-50%);">Fuego</div>
+                    <div class="element-label" style="top: 17%; left: 50%; transform: translateX(-50%);">Aire</div>
+                    <div class="element-label" style="top: 27%; left: 50%; transform: translateX(-50%);">Agua</div>
+                    <div class="element-label" style="top: 37%; left: 50%; transform: translateX(-50%);">Tierra</div>
+                ` : '';
+
+                this.container.innerHTML = `
+                    <h2 class="text-xl font-bold text-center text-amber-300">Cadena ${this.config.roman}</h2>
+                    <p class="text-center text-gray-300 text-sm">${this.config.title}</p>
+                    <p class="text-center text-gray-400 text-xs mb-2">${this.config.planet}</p>
+                    <p class="status-text text-center text-gray-400 h-6 mb-2"></p>
+                    <div class="animation-container">
+                        <div class="animation-content">
+                            <div class="schematic-circle" style="width: 100%; height: 100%;"></div>
+                            <div class="schematic-circle" style="width: 80%; height: 80%;"></div>
+                            <div class="schematic-circle" style="width: 60%; height: 60%;"></div>
+                            <div class="schematic-circle" style="width: 40%; height: 40%;"></div>
+                            ${elementLabelsHTML}
+                            <svg class="trail-canvas w-full h-full" style="z-index: 2;"></svg>
+                            <div class="globes-container absolute inset-0"></div>
+                        </div>
+                    </div>
+                    <div class="mt-4 text-center">
+                        <button class="start-button bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Iniciar Viaje</button>
+                    </div>
+                    <button class="close-zoom-btn">&times;</button>
+                `;
+
+                this.statusText = this.container.querySelector('.status-text');
+                this.trailCanvas = this.container.querySelector('.trail-canvas');
+                this.globesContainer = this.container.querySelector('.globes-container');
+                this.animationContainer = this.container.querySelector('.animation-container');
+                this.startButton = this.container.querySelector('.start-button');
+                this.closeButton = this.container.querySelector('.close-zoom-btn');
+
+                if (this.config.locked) {
+                    this.container.classList.add('locked');
+                    this.startButton.disabled = true;
+                    this.startButton.textContent = 'Bloqueado';
+                    this.startButton.classList.replace('bg-blue-600', 'bg-gray-600');
+                    this.startButton.classList.replace('hover:bg-blue-700', 'cursor-not-allowed');
+                }
+
+                this.globesData.forEach(data => {
+                    const globeEl = document.createElement('div');
+                    globeEl.className = 'globe';
+                    globeEl.textContent = data.id;
+                    const containerSize = 500, elementSize = 50;
+                    const initialX = (containerSize / 2) + (data.radius * containerSize / 2) * Math.cos((data.angle - 90) * Math.PI / 180) - elementSize / 2;
+                    const initialY = (containerSize / 2) + (data.radius * containerSize / 2) * Math.sin((data.angle - 90) * Math.PI / 180) - elementSize / 2;
+                    globeEl.style.left = `${initialX / containerSize * 100}%`;
+                    globeEl.style.top = `${initialY / containerSize * 100}%`;
+                    data.el = globeEl;
+                    this.updateGlobeCoords(data);
+                    this.globesContainer.appendChild(globeEl);
+                    this.makeDraggable(globeEl, data);
+                });
+                
+                this.startButton.onclick = (e) => { e.stopPropagation(); this.startAnimation(); };
+                this.container.onclick = () => { if (!this.isZoomed) this.zoomIn(); };
+                this.closeButton.onclick = (e) => { e.stopPropagation(); this.zoomOut(); };
+            }
+
+            updateGlobeCoords(data) {
+                const rect = this.animationContainer.getBoundingClientRect();
+                const elRect = data.el.getBoundingClientRect();
+                data.cx = (elRect.left - rect.left) + elRect.width / 2;
+                data.cy = (elRect.top - rect.top) + elRect.height / 2;
+            }
+            
+            makeDraggable(element, data) {
+                let offsetX, offsetY;
+                const move = (e) => {
+                    if (!this.isZoomed || this.config.locked) return;
+                    e.preventDefault();
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    const rect = this.animationContainer.getBoundingClientRect();
+                    let newX = clientX - rect.left - offsetX;
+                    let newY = clientY - rect.top - offsetY;
+                    const elementSize = element.offsetWidth;
+                    newX = Math.max(0, Math.min(newX, rect.width - elementSize));
+                    newY = Math.max(0, Math.min(newY, rect.height - elementSize));
+                    element.style.left = `${newX / rect.width * 100}%`;
+                    element.style.top = `${newY / rect.height * 100}%`;
+                };
+                const stop = () => {
+                    document.removeEventListener('mousemove', move);
+                    document.removeEventListener('mouseup', stop);
+                    document.removeEventListener('touchmove', move);
+                    document.removeEventListener('touchend', stop);
+                    element.classList.remove('dragging');
+                    this.updateGlobeCoords(data);
+                };
+                const start = (e) => {
+                    if (!this.isZoomed || this.config.locked) return;
+                    e.preventDefault(); e.stopPropagation();
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    const elRect = element.getBoundingClientRect();
+                    offsetX = clientX - elRect.left;
+                    offsetY = clientY - elRect.top;
+                    element.classList.add('dragging');
+                    document.addEventListener('mousemove', move);
+                    document.addEventListener('mouseup', stop);
+                    document.addEventListener('touchmove', move);
+                    document.addEventListener('touchend', stop);
+                };
+                element.addEventListener('mousedown', start);
+                element.addEventListener('touchstart', start);
+            }
+
+            zoomIn() {
+                if (this.config.locked) return;
+                this.isZoomed = true;
+                this.container.classList.add('zoomed');
+                document.getElementById('zoom-overlay').classList.add('visible');
+                this.globesData.forEach(data => this.updateGlobeCoords(data));
+                this.updateStatus("ordena los globos y regresa para Iniciar el viaje");
+            }
+
+            zoomOut() {
+                this.isZoomed = false;
+                this.container.classList.remove('zoomed');
+                document.getElementById('zoom-overlay').classList.remove('visible');
+                this.updateStatus("");
+            }
+
+            updateStatus(text) { this.statusText.textContent = text; }
+
+            drawTrail(startGlobe, endGlobe, color, roundNumber) {
+                const offset = (roundNumber - 3.5) * 2; // Offset for parallel lines
+                const dx = endGlobe.cx - startGlobe.cx, dy = endGlobe.cy - startGlobe.cy;
+                const length = Math.sqrt(dx * dx + dy * dy);
+                if (length < 1) return;
+                
+                const ux = dx / length, uy = dy / length; // Unit vector
+                const px = -uy, py = ux; // Perpendicular vector
+                
+                const globeRadius = startGlobe.el.offsetWidth / 2;
+                const startX = startGlobe.cx + ux * globeRadius;
+                const startY = startGlobe.cy + uy * globeRadius;
+                const endX = endGlobe.cx - ux * globeRadius;
+                const endY = endGlobe.cy - uy * globeRadius;
+                
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', startX + px * offset);
+                line.setAttribute('y1', startY + py * offset);
+                line.setAttribute('x2', endX + px * offset);
+                line.setAttribute('y2', endY + py * offset);
+                line.setAttribute('stroke', color);
+                line.setAttribute('stroke-width', '2');
+                this.trailCanvas.appendChild(line);
+            }
+
+            async startAnimation() {
+                this.startButton.disabled = true;
+                this.trailCanvas.innerHTML = '';
+                this.globesContainer.querySelectorAll('.globe').forEach(g => g.classList.remove('active'));
+                this.globesData.forEach(data => this.updateGlobeCoords(data));
+                
+                const activationLimit = this.config.activationLimit;
+
+                for (let i = 0; i < activationLimit; i++) {
+                    const roundNumber = i + 1;
+                    this.updateStatus(`Ronda ${roundNumber}...`);
+                    
+                    let path = [];
+                    const roundStartIndex = (i === 0) ? 0 : i - 1;
+                    for (let k = 0; k < this.globesData.length; k++) path.push(this.globesData[(roundStartIndex + k) % this.globesData.length]);
+                    path.push(this.globesData[roundStartIndex]);
+                    path.push(this.globesData[i]);
+                    if (i === 0) path.pop();
+
+                    for (let j = 0; j < path.length - 1; j++) {
+                        const currentTarget = path[j], nextTarget = path[j+1];
+                        this.drawTrail(currentTarget, nextTarget, this.trailColors[i], roundNumber);
+                        await new Promise(res => setTimeout(res, 200));
+                    }
+                    
+                    this.globesContainer.childNodes[i].classList.add('active');
+                    await new Promise(res => setTimeout(res, 500));
+                }
+
+                if (this.config.roman === 'IV') {
+                    this.updateStatus('¡Felicidades!');
+                    showCelebration();
+                    await new Promise(res => setTimeout(res, 3000));
+                    this.updateStatus('Los demás globos no han sido desbloqueados.');
+                } else {
+                    this.updateStatus('¡Viaje completado!');
+                }
+                
+                this.startButton.disabled = false;
+            }
+        }
+
+        // --- MANEJADOR PRINCIPAL ---
+        const gameGrid = document.getElementById('game-grid');
+        const overlay = document.getElementById('zoom-overlay');
+        
+        const gameConfigs = [
+            { roman: 'I', title: 'REINO MINERAL', planet: 'Planeta X', activationLimit: 7, locked: false },
+            { roman: 'II', title: 'REINO VEGETAL', planet: 'Planeta X', activationLimit: 7, locked: false },
+            { roman: 'III', title: 'REINO ANIMAL', planet: 'Planeta Luna', activationLimit: 7, locked: false },
+            { roman: 'IV', title: 'REINO HUMANO', planet: 'Planeta Tierra', activationLimit: 4, locked: false },
+            { roman: 'V', title: 'DIOSES MENTALES', planet: 'Planeta Y', activationLimit: 0, locked: true },
+            { roman: 'VI', title: 'DIOSES COMPLETOS', planet: 'Planeta Y', activationLimit: 0, locked: true },
+            { roman: 'VII', title: '...............', planet: 'Planeta Y', activationLimit: 0, locked: true }
+        ];
+
+        const gameInstances = [];
+
+        gameConfigs.forEach(config => {
+            const instanceContainer = document.createElement('div');
+            instanceContainer.className = 'game-instance';
+            gameGrid.appendChild(instanceContainer);
+            const game = new Game(instanceContainer, config);
+            gameInstances.push(game);
+        });
+
+        function showCelebration() {
+            const celebrationContainer = document.getElementById('celebration-container');
+            for (let i = 0; i < 100; i++) {
+                const confetti = document.createElement('div');
+                confetti.className = 'confetti';
+                confetti.style.left = Math.random() * 100 + 'vw';
+                confetti.style.top = -20 + 'px';
+                confetti.style.backgroundColor = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                confetti.style.animationDelay = Math.random() * 3 + 's';
+                confetti.style.transform = `scale(${Math.random() * 1.5 + 0.5})`;
+                celebrationContainer.appendChild(confetti);
+            }
+            setTimeout(() => { celebrationContainer.innerHTML = ''; }, 5000);
+        }
+
+        overlay.onclick = () => {
+            const zoomedGame = gameInstances.find(g => g.isZoomed);
+            if (zoomedGame) {
+                zoomedGame.zoomOut();
+            }
+        };
+
+    </script>
+</body>
+</html>
